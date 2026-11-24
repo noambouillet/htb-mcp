@@ -6,20 +6,21 @@ The point of the project is to move HTB API interactions behind MCP tools so oth
 
 ## What It Does
 
-- Lists HTB machines
+- Lists HTB machines (all pages, filterable by state, completion, difficulty, OS, keyword)
 - Looks up a machine by name or id
 - Starts a machine and waits for the IP
 - Checks machine status
 - Submits a machine flag
-- Lists HTB challenges
+- Lists HTB challenges (all pages, filterable by state, completion, difficulty, category, keyword)
 - Looks up a challenge by name or id
 - Downloads challenge files
 - Starts a remote challenge instance when the challenge supports it
 - Checks challenge instance status
 - Submits a challenge flag
-- Lists Sherlocks
+- Lists Sherlocks (all pages, filterable by state, completion, difficulty, category, keyword)
 - Looks up a Sherlock by name or id
 - Reads Sherlock play details
+- Downloads and extracts Sherlock files (AES zips need `7z` installed)
 - Lists Sherlock tasks
 - Submits a Sherlock task flag
 
@@ -99,6 +100,7 @@ The server exposes these FastMCP tools:
 - `list_htb_sherlocks`
 - `get_htb_sherlock`
 - `get_htb_sherlock_play`
+- `download_htb_sherlock`
 - `list_htb_sherlock_tasks`
 - `submit_htb_sherlock_task_flag`
 

@@ -8,6 +8,8 @@ from mcp.server.fastmcp import FastMCP
 from .api import (
     HtbApiConfig,
     HtbApiError,
+    challenge_instance_address,
+    download_sherlock_zip,
     get_challenge,
     get_machine,
     get_active_machine,
@@ -43,13 +45,18 @@ def _machine_summary(machine: dict[str, Any]) -> dict[str, Any]:
         "os": machine.get("os"),
         "difficulty": machine.get("difficultyText") or machine.get("difficulty"),
         "points": machine.get("points"),
-        "rating": machine.get("star"),
+        "rating": machine.get("rating") or machine.get("star") or machine.get("stars"),
+        "state": machine.get("state"),
         "active": machine.get("active"),
         "retired": machine.get("retired"),
         "free": machine.get("free"),
-        "avatar": machine.get("avatar"),
+        "user_owned": machine.get("authUserInUserOwns"),
+        "root_owned": machine.get("authUserInRootOwns"),
+        "release": machine.get("releaseDate") or machine.get("release"),
         "ip": machine.get("ip"),
-        "is_spawning": machine.get("isSpawning"),
+        "is_spawning": machine.get("isSpawning")
+        if machine.get("isSpawning") is not None
+        else (machine.get("playInfo") or {}).get("isSpawning"),
     }
 
 
@@ -70,17 +77,30 @@ def _challenge_summary(challenge: dict[str, Any]) -> dict[str, Any]:
         "category": challenge.get("category_name"),
         "difficulty": challenge.get("difficulty"),
         "points": challenge.get("points"),
+        "state": challenge.get("state"),
         "solves": challenge.get("solves"),
+        "owned": challenge.get("is_owned", challenge.get("authUserSolve")),
+        "play_methods": challenge.get("play_methods"),
+        "release_date": challenge.get("release_date"),
+    }
+
+
+def _challenge_detail(challenge: dict[str, Any]) -> dict[str, Any]:
+    host, ports = challenge_instance_address(challenge)
+    return {
+        **_challenge_summary(challenge),
+        "description": challenge.get("description"),
         "download": challenge.get("download"),
+        "file_name": challenge.get("file_name"),
+        "file_size": challenge.get("file_size"),
         "docker": challenge.get("docker"),
-        "docker_ip": challenge.get("docker_ip"),
-        "docker_ports": challenge.get("docker_ports"),
+        "docker_ip": host,
+        "docker_ports": ports,
     }
 
 
 def _challenge_instance_summary(challenge: dict[str, Any]) -> dict[str, Any] | None:
-    host = challenge.get("docker_ip")
-    ports = challenge.get("docker_ports") or []
+    host, ports = challenge_instance_address(challenge)
     if not host and not ports:
         return None
     return {
@@ -102,10 +122,12 @@ def _sherlock_summary(sherlock: dict[str, Any]) -> dict[str, Any]:
         "is_owned": sherlock.get("is_owned"),
         "progress": sherlock.get("progress"),
         "play_methods": sherlock.get("play_methods"),
-        "release_date": sherlock.get("release_date"),
-        "avatar": sherlock.get("avatar"),
-        "labels": sherlock.get("labels"),
+        "release_date": sherlock.get("release_date") or sherlock.get("release_at"),
     }
+
+
+def _listing(items: list[dict[str, Any]], total: int | None, summarize) -> dict[str, Any]:
+    return {"total": total, "returned": len(items), "items": [summarize(i) for i in items]}
 
 
 def _sherlock_play_summary(sherlock: dict[str, Any]) -> dict[str, Any]:
@@ -147,9 +169,34 @@ def create_server() -> FastMCP:
         ),
     )
 
-    @mcp.tool(description="List Hack The Box machines.")
-    def list_htb_machines() -> list[dict[str, Any]]:
-        return [_machine_summary(machine) for machine in list_machines(_api_config())]
+    @mcp.tool(
+        description=(
+            "List Hack The Box machines (all pages). Filters: state (active|retired), "
+            "status (completed|incompleted, based on root own), difficulty (comma list: "
+            "easy,medium,hard,insane), os (comma list: linux,windows,...), keyword, free, "
+            "limit (0 = no limit)."
+        )
+    )
+    def list_htb_machines(
+        state: str | None = None,
+        status: str | None = None,
+        difficulty: str | None = None,
+        os: str | None = None,
+        keyword: str | None = None,
+        free: bool | None = None,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        items, total = list_machines(
+            _api_config(),
+            state=state,
+            status=status,
+            difficulty=difficulty,
+            os=os,
+            keyword=keyword,
+            free=free,
+            limit=limit or None,
+        )
+        return _listing(items, total, _machine_summary)
 
     @mcp.tool(description="Get one Hack The Box machine by exact name or numeric id.")
     def get_htb_machine(machine: str) -> dict[str, Any]:
@@ -179,13 +226,35 @@ def create_server() -> FastMCP:
         response = submit_machine_flag(_api_config(), flag, machine_id=machine_id)
         return {"machine_id": machine_id, "response": response}
 
-    @mcp.tool(description="List Hack The Box challenges.")
-    def list_htb_challenges() -> list[dict[str, Any]]:
-        return [_challenge_summary(challenge) for challenge in list_challenges(_api_config())]
+    @mcp.tool(
+        description=(
+            "List Hack The Box challenges (all pages). Filters: state (active|retired|unreleased), "
+            "status (complete|incompleted), difficulty (comma list: very easy,easy,medium,hard,insane), "
+            "category (comma list of names or ids, e.g. web,pwn,crypto), keyword, limit (0 = no limit)."
+        )
+    )
+    def list_htb_challenges(
+        state: str | None = None,
+        status: str | None = None,
+        difficulty: str | None = None,
+        category: str | None = None,
+        keyword: str | None = None,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        items, total = list_challenges(
+            _api_config(),
+            state=state,
+            status=status,
+            difficulty=difficulty,
+            category=category,
+            keyword=keyword,
+            limit=limit or None,
+        )
+        return _listing(items, total, _challenge_summary)
 
     @mcp.tool(description="Get one Hack The Box challenge by exact name or numeric id.")
     def get_htb_challenge(challenge: str) -> dict[str, Any]:
-        return _challenge_summary(get_challenge(_api_config(), challenge))
+        return _challenge_detail(get_challenge(_api_config(), challenge))
 
     @mcp.tool(description="Download Hack The Box challenge files into a destination directory.")
     def download_htb_challenge(
@@ -209,7 +278,7 @@ def create_server() -> FastMCP:
         target = get_challenge(config, challenge)
         started = start_challenge_instance(config, int(target["id"]))
         return {
-            "challenge": _challenge_summary(started),
+            "challenge": _challenge_detail(started),
             "instance": _challenge_instance_summary(started),
         }
 
@@ -217,7 +286,7 @@ def create_server() -> FastMCP:
     def get_htb_challenge_status(challenge: str) -> dict[str, Any]:
         target = get_challenge(_api_config(), challenge)
         return {
-            "challenge": _challenge_summary(target),
+            "challenge": _challenge_detail(target),
             "instance": _challenge_instance_summary(target),
         }
 
@@ -254,13 +323,31 @@ def create_server() -> FastMCP:
             "response": response,
         }
 
-    @mcp.tool(description="List Hack The Box sherlocks. Optionally filter by keyword.")
-    def list_htb_sherlocks(keyword: str | None = None) -> list[dict[str, Any]]:
-        data = list_sherlocks(_api_config(), keyword=keyword)
-        items = data.get("data")
-        if not isinstance(items, list):
-            raise HtbApiError("HTB API response did not contain a sherlock list.")
-        return [_sherlock_summary(sherlock) for sherlock in items if isinstance(sherlock, dict)]
+    @mcp.tool(
+        description=(
+            "List Hack The Box sherlocks (all pages). Filters: state (active|retired), "
+            "status (complete|incompleted), difficulty (comma list), category (comma list of "
+            "names or ids, e.g. DFIR,SOC), keyword, limit (0 = no limit)."
+        )
+    )
+    def list_htb_sherlocks(
+        state: str | None = None,
+        status: str | None = None,
+        difficulty: str | None = None,
+        category: str | None = None,
+        keyword: str | None = None,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        items, total = list_sherlocks(
+            _api_config(),
+            state=state,
+            status=status,
+            difficulty=difficulty,
+            category=category,
+            keyword=keyword,
+            limit=limit or None,
+        )
+        return _listing(items, total, _sherlock_summary)
 
     @mcp.tool(description="Get one Hack The Box sherlock by exact name or numeric id.")
     def get_htb_sherlock(sherlock: str) -> dict[str, Any]:
@@ -269,6 +356,17 @@ def create_server() -> FastMCP:
     @mcp.tool(description="Get play details for a Hack The Box sherlock by exact name or numeric id.")
     def get_htb_sherlock_play(sherlock: str) -> dict[str, Any]:
         return _sherlock_play_summary(get_sherlock_play(_api_config(), sherlock))
+
+    @mcp.tool(description="Download and extract Hack The Box sherlock files into a destination directory.")
+    def download_htb_sherlock(sherlock: str, destination: str = ".") -> dict[str, Any]:
+        result = download_sherlock_zip(_api_config(), sherlock, Path(destination).expanduser())
+        return {
+            "sherlock": _sherlock_summary(result["sherlock"]),
+            "downloaded_to": result["downloaded_to"],
+            "extracted": result["extracted"],
+            "zip_path": result["zip_path"],
+            "zip_password": result["zip_password"],
+        }
 
     @mcp.tool(description="List tasks for a Hack The Box sherlock by exact name or numeric id.")
     def list_htb_sherlock_tasks(sherlock: str) -> list[dict[str, Any]]:
